@@ -11,7 +11,6 @@ module Stack.Nix
   ,nixHelpOptName
   ) where
 
-import           Control.Applicative
 import           Control.Arrow ((***))
 import           Control.Exception (Exception,throw)
 import           Control.Monad hiding (mapM)
@@ -20,7 +19,6 @@ import           Control.Monad.IO.Class (MonadIO,liftIO)
 import           Control.Monad.Logger (MonadLogger,logDebug)
 import           Control.Monad.Reader (MonadReader,asks)
 import           Control.Monad.Trans.Control (MonadBaseControl)
-import           Data.Char (toUpper)
 import           Data.List (intercalate)
 import           Data.Maybe
 import           Data.Monoid
@@ -33,14 +31,14 @@ import           Path
 import           Path.IO
 import qualified Paths_stack as Meta
 import           Prelude hiding (mapM) -- Fix redundant import warnings
-import           Stack.Config (makeConcreteResolver)
+import           Stack.Config (makeConcreteResolver, getInNixShell, getInContainer)
 import           Stack.Config.Nix (nixCompiler)
-import           Stack.Constants (stackProgName,platformVariantEnvVar)
+import           Stack.Constants (platformVariantEnvVar,inNixShellEnvVar)
 import           Stack.Docker (reExecArgName)
 import           Stack.Exec (exec)
 import           Stack.Types
 import           Stack.Types.Internal
-import           System.Environment (lookupEnv,getArgs,getExecutablePath)
+import           System.Environment (getArgs,getExecutablePath)
 import           System.Process.Read (getEnvOverride)
 
 -- | If Nix is enabled, re-runs the currently running OS command in a Nix container.
@@ -54,19 +52,21 @@ reexecWithOptionalShell
     -> m ()
 reexecWithOptionalShell mprojectRoot maresolver mcompiler inner =
   do config <- asks getConfig
-     inShell <- getInShell
+     inShell <- getInNixShell
+     inContainer <- getInContainer
      isReExec <- asks getReExec
-     if nixEnable (configNix config) && not inShell  -- && not isReExec
-       then runShellAndExit mprojectRoot maresolver mcompiler getCmdArgs
-       else liftIO inner
-  where
-    getCmdArgs = do
-        args <-
-            fmap
-                (("--" ++ reExecArgName ++ "=" ++ showVersion Meta.version) :)
-                (liftIO getArgs)
-        exePath <- liftIO getExecutablePath
-        return (exePath, args)
+     let getCmdArgs = do
+           origArgs <- liftIO getArgs
+           let args | inContainer = origArgs  -- internal-re-exec version already passed
+                      -- first stack when restarting in the container
+                    | otherwise =
+                        ("--" ++ reExecArgName ++ "=" ++ showVersion Meta.version) : origArgs
+           exePath <- liftIO getExecutablePath
+           return (exePath, args)
+     if nixEnable (configNix config) && not inShell && (not isReExec || inContainer)
+        then runShellAndExit mprojectRoot maresolver mcompiler getCmdArgs
+        else liftIO inner
+    
 
 runShellAndExit
     :: M env m
@@ -95,7 +95,7 @@ runShellAndExit mprojectRoot maresolver mcompiler getCmdArgs = do
                                ,"runCommand \"myEnv\" {"
                                ,"buildInputs=lib.optional stdenv.isLinux glibcLocales ++ ["],pkgs,["];"
                                ,T.pack platformVariantEnvVar <> "=''nix'';"
-                               ,T.pack inShellEnvVar <> "=1;"
+                               ,T.pack inNixShellEnvVar <> "=1;"
                                ,"STACK_IN_NIX_EXTRA_ARGS=''"]
                                ,      (map (\p -> T.concat
                                                   ["--extra-lib-dirs=${",p,"}/lib"
@@ -126,16 +126,6 @@ escape str = "'" ++ foldr (\c -> if c == '\'' then
 -- | Fail with friendly error if project root not set.
 fromMaybeProjectRoot :: Maybe (Path Abs Dir) -> Path Abs Dir
 fromMaybeProjectRoot = fromMaybe (throw CannotDetermineProjectRootException)
-
--- | 'True' if we are currently running inside a Nix.
-getInShell :: (MonadIO m) => m Bool
-getInShell = liftIO (isJust <$> lookupEnv inShellEnvVar)
-
--- | Environment variable used to indicate stack is running in container.
--- although we already have STACK_IN_NIX_EXTRA_ARGS that is set in the same conditions,
--- it can happen that STACK_IN_NIX_EXTRA_ARGS is set to empty.
-inShellEnvVar :: String
-inShellEnvVar = concat [map toUpper stackProgName,"_IN_NIXSHELL"]
 
 -- | Command-line argument for "nix"
 nixCmdName :: String
