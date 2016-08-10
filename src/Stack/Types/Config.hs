@@ -168,6 +168,7 @@ import           Data.Aeson.Extended
                   (.=), (..:), (..:?), (..!=), Value(String, Object),
                   withObjectWarnings, WarningParser, Object, jsonSubWarnings,
                   jsonSubWarningsT, jsonSubWarningsTT, WithJSONWarnings(..), noJSONWarnings)
+import           Data.Aeson.Types (typeMismatch)
 import           Data.Attoparsec.Args
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S8
@@ -689,7 +690,7 @@ instance FromJSON (WithJSONWarnings (ResolverThat's 'NotLoaded)) where
 
     parseJSON (String t) = either (fail . show) return (noJSONWarnings <$> parseResolverText t)
 
-    parseJSON _ = fail "Invalid Resolver, must be Object or String"
+    parseJSON invalid    = typeMismatch "Resolver (Object or String)" invalid
 
 -- | Convert a Resolver into its @Text@ representation, as will be used by
 -- directory names

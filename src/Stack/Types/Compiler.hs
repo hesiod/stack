@@ -7,6 +7,7 @@ module Stack.Types.Compiler where
 
 import           Control.DeepSeq
 import           Data.Aeson
+import           Data.Aeson.Types (typeMismatch)
 import           Data.Data
 import           Data.Map (Map)
 import qualified Data.Map as Map
@@ -42,7 +43,7 @@ instance ToJSON CompilerVersion where
     toJSON = toJSON . compilerVersionText
 instance FromJSON CompilerVersion where
     parseJSON (String t) = maybe (fail "Failed to parse compiler version") return (parseCompilerVersion t)
-    parseJSON _ = fail "Invalid CompilerVersion, must be String"
+    parseJSON invalid = typeMismatch "CompilerVersion (String)" invalid
 instance FromJSON a => FromJSON (Map CompilerVersion a) where
     -- TODO: Dedupe with similar code in Stack.Types.Version?
     --
