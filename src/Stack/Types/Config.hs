@@ -688,9 +688,9 @@ instance FromJSON (WithJSONWarnings (ResolverThat's 'NotLoaded)) where
         <$> o ..: "name"
         <*> o ..: "location") v
 
-    parseJSON (String t) = either (fail . show) return (noJSONWarnings <$> parseResolverText t)
+    parseJSON (String t)   = either (fail . show) return (noJSONWarnings <$> parseResolverText t)
 
-    parseJSON invalid    = typeMismatch "Resolver (Object or String)" invalid
+    parseJSON invalid      = typeMismatch "Resolver (Object or String)" invalid
 
 -- | Convert a Resolver into its @Text@ representation, as will be used by
 -- directory names
