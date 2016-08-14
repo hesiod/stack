@@ -40,6 +40,7 @@ import           Data.Monoid.Extra
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as T
 import           Data.Version                      (showVersion)
+import           Data.Aeson.Types                  (parseEither)
 import           Distribution.Version              (anyVersion)
 import           Options.Applicative
 import           Options.Applicative.Args
@@ -821,6 +822,13 @@ abstractResolverOptsParser hide =
          metavar "RESOLVER" <>
          help "Override resolver in project file" <>
          hideMods hide)
+
+readAbstractResolver :: ReadM AbstractResolver
+readAbstractResolver = do
+    s <- T.pack <$> readerAsk
+    case parseAbstractResolverText s of
+      Just x -> pure x
+      Nothing -> either (readerError . show) (pure . ARResolver) (parseEither parseResolverText s)
 
 compilerOptsParser :: Bool -> Parser CompilerVersion
 compilerOptsParser hide =

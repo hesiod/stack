@@ -14,6 +14,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | The Config type.
 
@@ -103,6 +104,7 @@ module Stack.Types.Config
   ,LoadedResolver
   ,ResolverThat's(..)
   ,parseResolverText
+  ,parseAbstractResolverText
   ,resolverDirName
   ,resolverName
   ,customResolverHash
@@ -160,7 +162,7 @@ import           Control.Applicative
 import           Control.Arrow ((&&&))
 import           Control.Exception
 import           Control.Monad (liftM, mzero, join)
-import           Control.Monad.Catch (MonadThrow, throwM)
+import           Control.Monad.Catch (MonadThrow)
 import           Control.Monad.Logger (LogLevel(..))
 import           Control.Monad.Reader (MonadReader, ask, asks, MonadIO, liftIO)
 import           Data.Aeson.Extended
@@ -168,7 +170,7 @@ import           Data.Aeson.Extended
                   (.=), (..:), (..:?), (..!=), Value(String, Object),
                   withObjectWarnings, WarningParser, Object, jsonSubWarnings,
                   jsonSubWarningsT, jsonSubWarningsTT, WithJSONWarnings(..), noJSONWarnings)
-import           Data.Aeson.Types (typeMismatch)
+import           Data.Aeson.Types (typeMismatch, Parser)
 import           Data.Attoparsec.Args
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S8
@@ -688,9 +690,17 @@ instance FromJSON (WithJSONWarnings (ResolverThat's 'NotLoaded)) where
         <$> o ..: "name"
         <*> o ..: "location") v
 
-    parseJSON (String t)   = either (fail . show) return (noJSONWarnings <$> parseResolverText t)
+    parseJSON (String t)   = noJSONWarnings <$> parseResolverText t
 
     parseJSON invalid      = typeMismatch "Resolver (Object or String)" invalid
+
+-- | Try to parse an @AbstractResolver@ from a @Text@. Returns Nothing for concrete resolvers.
+parseAbstractResolverText :: Text -> Maybe AbstractResolver
+parseAbstractResolverText "global" = pure ARGlobal
+parseAbstractResolverText "nightly" = pure ARLatestNightly
+parseAbstractResolverText "lts" = pure ARLatestLTS
+parseAbstractResolverText (fmap decimal . T.stripPrefix "lts-" -> Just (Right (maj, ""))) = pure . ARLatestLTSMajor $ maj
+parseAbstractResolverText _ = Nothing
 
 -- | Convert a Resolver into its @Text@ representation, as will be used by
 -- directory names
@@ -711,12 +721,21 @@ customResolverHash :: LoadedResolver-> Maybe SnapshotHash
 customResolverHash (ResolverCustomLoaded _ _ hash) = Just hash
 customResolverHash _ = Nothing
 
+-- TODO: If "instance IsString str => MonadFail (Either str)" ever appears in Data.Either,
+-- change parseResolverType's type to "MonadFail m => Text -> m Resolver".
+-- With that in place, "parseEither parseResolverText" in readAbstractResolver (Stack/Options.hs)
+-- can be simplified to "parseResolverText".
+
 -- | Try to parse a @Resolver@ from a @Text@. Won't work for complex resolvers (like custom).
-parseResolverText :: MonadThrow m => Text -> m Resolver
-parseResolverText t
-    | Right x <- parseSnapName t = return $ ResolverSnapshot x
-    | Just v <- parseCompilerVersion t = return $ ResolverCompiler v
-    | otherwise = throwM $ ParseResolverException t
+parseResolverText :: Text -> Parser Resolver
+parseResolverText (parseSnapName -> Right x) = pure $ ResolverSnapshot x
+parseResolverText (parseCompilerVersion -> Just v) = pure $ ResolverCompiler v
+parseResolverText t = fail $ concat
+  [ "Invalid resolver value: "
+  , T.unpack t
+  , ". Possible valid values include lts-2.12, nightly-YYYY-MM-DD, ghc-7.10.2, and ghcjs-0.1.0_ghc-7.10.2. "
+  , "See https://www.stackage.org/snapshots for a complete list."
+  ]
 
 toResolverNotLoaded :: LoadedResolver -> Resolver
 toResolverNotLoaded r = case r of
@@ -1052,7 +1071,6 @@ configMonoidAllowDifferentUserName = "allow-different-user"
 data ConfigException
   = ParseConfigFileException (Path Abs File) ParseException
   | ParseCustomSnapshotException Text ParseException
-  | ParseResolverException Text
   | NoProjectConfigFound (Path Abs Dir) (Maybe Text)
   | UnexpectedArchiveContents [Path Abs Dir] [Path Abs File]
   | UnableToExtractArchive Text (Path Abs File)
@@ -1081,12 +1099,6 @@ instance Show ConfigException where
         , Yaml.prettyPrintParseException exception
         -- FIXME: Link to docs about custom snapshots
         -- , "\nSee http://docs.haskellstack.org/en/stable/yaml_configuration/."
-        ]
-    show (ParseResolverException t) = concat
-        [ "Invalid resolver value: "
-        , T.unpack t
-        , ". Possible valid values include lts-2.12, nightly-YYYY-MM-DD, ghc-7.10.2, and ghcjs-0.1.0_ghc-7.10.2. "
-        , "See https://www.stackage.org/snapshots for a complete list."
         ]
     show (NoProjectConfigFound dir mcmd) = concat
         [ "Unable to find a stack.yaml file in the current directory ("
